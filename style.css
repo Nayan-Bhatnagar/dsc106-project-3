@@ -1,0 +1,535 @@
+/* ============================================================
+   style.css  —  CMIP6 Temperature Scenario Explorer
+   ============================================================ */
+
+/* ── Reset & base ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #f0f4f9;
+  --surface:   #ffffff;
+  --surface2:  #f5f7fc;
+  --border:    #d1d9ea;
+  --accent:    #2563eb;
+  --textPrim:  #1a2035;
+  --textSec:   #5a6a8a;
+  --tagA:      #ea6600;   /* orange  */
+  --tagB:      #0284c7;   /* sky blue */
+  --gap-sm:    8px;
+  --gap-md:    16px;
+  --gap-lg:    28px;
+  --radius:    10px;
+}
+
+html, body {
+  min-height: 100%;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--textPrim);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+header {
+  padding: var(--gap-lg) var(--gap-lg) var(--gap-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+header h1 {
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--textPrim);
+  line-height: 1.25;
+}
+
+header h2 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--textPrim);
+  line-height: 1.25;
+  padding-top: 0.7rem;
+}
+
+.subtitle {
+  color: var(--textSec);
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+/* ── Main layout ──────────────────────────────────────────── */
+main {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "controls  controls"
+    "map       info"
+    "ts        ts";
+  gap: var(--gap-md);
+  padding: var(--gap-md) var(--gap-lg) max(180px, 25vh);
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── Controls ─────────────────────────────────────────────── */
+#controls {
+  grid-area: controls;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--gap-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap-md) var(--gap-lg);
+  flex-wrap: wrap;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.control-group label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--textSec);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.control-group.minus-sign {
+  font-size: 1.8rem;
+  color: var(--textSec);
+  align-self: flex-end;
+  padding-bottom: 6px;
+  flex-direction: row;
+}
+
+.control-group.play-group,
+.control-group:has(#btn-play) {
+  align-self: center;
+}
+
+.tag {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.tagA { background: var(--tagA); color: #fff; }
+.tagB { background: var(--tagB); color: #fff; }
+
+select {
+  background: var(--surface2);
+  color: var(--textPrim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.88rem;
+  cursor: pointer;
+  min-width: 200px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%235a6a8a' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+select:focus { outline: 2px solid var(--accent); }
+
+.year-group {
+  flex: 1;
+  min-width: 260px;
+}
+
+.year-group label strong {
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+#year-slider {
+  width: 100%;
+  -webkit-appearance: none; /* Safari and older Chrome/iOS */
+  -moz-appearance: none;    /* Older Firefox */
+  appearance: none;         /* Modern standard */
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+
+#year-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; /* Safari and older Chrome/iOS */
+  -moz-appearance: none;    /* Older Firefox */
+  appearance: none;         /* Modern standard */
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 6px rgba(37,99,235,0.35);
+}
+
+#year-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 6px rgba(37,99,235,0.35);
+}
+
+.year-ticks {
+  position: relative;
+  height: 16px;
+  font-size: 0.72rem;
+  color: var(--textSec);
+  margin-top: 3px;
+  pointer-events: none;
+}
+
+.year-ticks span {
+  position: absolute;
+  /* (year - 2015) / 85; accounts for 16px thumb width (8px radius) */
+  left: calc(8px + (100% - 16px) * var(--pos, 0));
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+button:hover { background: #1d4ed8; }
+button.playing { background: #dc2626; }
+button.playing:hover { background: #b91c1c; }
+
+.btn-icon {
+  display: inline-block;
+  line-height: 1;
+}
+
+.pause-icon {
+  font-size: 0.6em;
+  letter-spacing: -1.5px;
+  margin-right: 2px;
+}
+
+/* ── Map section ──────────────────────────────────────────── */
+#map-section {
+  grid-area: map;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+#map-container {
+  position: relative;
+  flex: 1;
+  padding: 8px 12px;
+}
+
+#map-svg {
+  width: 100%;
+  height: 100%;
+  min-height: 440px;
+  display: block;
+}
+
+#plot-image {
+  image-rendering: auto;
+}
+
+/* Country borders & coastlines overlaid on the temperature heatmap */
+.coastlines {
+  fill: none;
+  stroke: rgba(15, 23, 42, 0.55);
+  stroke-width: 0.8px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.country-borders {
+  fill: none;
+  stroke: rgba(15, 23, 42, 0.30);
+  stroke-width: 0.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.plot-title {
+  fill: var(--textPrim);
+  font-size: 0.96rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.axis-label {
+  fill: var(--textSec);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+#colorbar-container {
+  display: none;
+}
+
+/* ── Tooltip ──────────────────────────────────────────────── */
+.tooltip {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.97);
+  color: var(--textPrim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  pointer-events: none;
+  line-height: 1.6;
+  z-index: 10;
+  min-width: 140px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  backdrop-filter: blur(4px);
+  transition: opacity 0.1s;
+}
+
+.tooltip.hidden { opacity: 0; }
+
+.tooltip strong {
+  display: block;
+  color: var(--accent);
+  margin-bottom: 3px;
+}
+
+/* ── Info panel ───────────────────────────────────────────── */
+#info-panel {
+  grid-area: info;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+}
+
+.info-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap-md);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.info-card h3 {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--textSec);
+  margin-bottom: var(--gap-sm);
+}
+
+.big-number {
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+  margin: 4px 0 2px;
+}
+
+.unit {
+  font-size: 0.8rem;
+  color: var(--textSec);
+}
+
+.note {
+  font-size: 0.72rem;
+  color: var(--textSec);
+  margin-top: 6px;
+  opacity: 0.7;
+}
+
+#region-card {
+  display: flex;
+  flex-direction: column;
+}
+
+#band-chart {
+  width: 100%;
+  height: 220px;
+  display: block;
+  margin: 0 auto;
+}
+
+/* ── Time series ──────────────────────────────────────────── */
+#timeseries-section {
+  grid-area: ts;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap-md);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+#timeseries-section h3 {
+  font-size: 0.82rem;
+  color: var(--textSec);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--gap-sm);
+}
+
+#ts-svg {
+  width: 100%;
+  height: 160px;
+  display: block;
+}
+
+.ts-legend {
+  display: flex;
+  gap: var(--gap-lg);
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.ts-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--textSec);
+}
+
+.ts-legend-swatch {
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* Year marker line on the timeseries */
+.year-line {
+  stroke: var(--textSec);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+/* ── Overlay ──────────────────────────────────────────────── */
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(240, 244, 249, 0.90);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(3px);
+  transition: opacity 0.3s;
+}
+
+#overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#overlay-content {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+#overlay-msg {
+  color: var(--textSec);
+  font-size: 1rem;
+}
+
+#progress-container {
+  width: 320px;
+  max-width: 85vw;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: -6px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+}
+
+#progress-bar {
+  width: 0%;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+#progress-details {
+  font-size: 1.5rem;
+  color: var(--textSec);
+  margin-top: -10px;
+}
+
+#spinner {
+  width: 42px;
+  height: 42px;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Axes ─────────────────────────────────────────────────── */
+.axis path, .axis line {
+  stroke: var(--border);
+}
+.axis text {
+  fill: var(--textSec);
+  font-size: 0.72rem;
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "controls"
+      "map"
+      "info"
+      "ts";
+  }
+
+  #info-panel {
+    flex-direction: row;
+  }
+
+  .info-card { flex: 1; }
+}

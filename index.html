@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CMIP6 Temperature Scenario Explorer</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- D3.js v7 and TopoJSON client (the only used external libraries)
+  Note: TopoJSON was not used for plotting anything directly-->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+</head>
+<body>
+
+  <header>
+    <h1>The Arctic Pays the Price: Regional Divergence Under Different Climate Scenarios</h1>
+    <h2>CMIP6 Temperature Scenario Explorer</h2>
+    <p class="subtitle">
+      Annual Mean Surface Air Temperature Difference<br>
+      Data From The CESM2 Model
+    </p>
+  </header>
+
+  <main>
+
+    <!-- ── Controls ───────────────────────────────────────────── -->
+    <section id="controls">
+
+      <div class="control-group">
+        <label>Scenario A <span class="tag tagA" id="tagA-label"></span></label>
+        <select id="scenarioA"></select>
+      </div>
+
+      <div class="control-group minus-sign">−</div>
+
+      <div class="control-group">
+        <label>Scenario B <span class="tag tagB" id="tagB-label"></span></label>
+        <select id="scenarioB"></select>
+      </div>
+
+      <div class="control-group year-group">
+        <label>Year: <strong id="year-display">2050</strong></label>
+        <input type="range" id="year-slider" min="2015" max="2100" step="1" value="2050" />
+        <div class="year-ticks">
+          <span style="--pos: 0.0588; left: calc(8px + (100% - 16px) * 0.0588);">2020</span>
+          <span style="--pos: 0.2941; left: calc(8px + (100% - 16px) * 0.2941);">2040</span>
+          <span style="--pos: 0.5294; left: calc(8px + (100% - 16px) * 0.5294);">2060</span>
+          <span style="--pos: 0.7647; left: calc(8px + (100% - 16px) * 0.7647);">2080</span>
+          <span style="--pos: 1.0; left: calc(8px + (100% - 16px) * 1);">2100</span>
+        </div>
+      </div>
+
+      <div class="control-group play-group">
+        <button id="btn-play" title="Animate through years"><span class="btn-icon">▶</span> Play</button>
+      </div>
+
+    </section>
+
+    <!-- ── Map ─────────────────────────────────────────────────── -->
+    <section id="map-section">
+      <div id="map-container">
+        <svg id="map-svg"></svg>
+        <div id="tooltip" class="tooltip hidden"></div>
+      </div>
+      <div id="colorbar-container"></div>
+    </section>
+
+    <!-- ── Info Panel ──────────────────────────────────────────── -->
+    <section id="info-panel">
+
+      <!-- Global mean readout -->
+      <div class="info-card" id="global-mean-card">
+        <h3>Global Mean Δ<em>T</em></h3>
+        <div class="big-number" id="global-mean-value">—</div>
+        <div class="unit">°C (A − B)</div>
+        <p class="note">Difference in mean temperatures of the chosen scenarios</p>
+      </div>
+
+      <!-- Per-region breakdown -->
+      <div class="info-card" id="region-card">
+        <h3>By Latitude Band</h3>
+        <svg id="band-chart"></svg>
+      </div>
+
+    </section>
+
+    <!-- ── Time-series panel ───────────────────────────────────── -->
+    <section id="timeseries-section">
+      <h3>Global mean temperature (°C) over time</h3>
+      <svg id="ts-svg"></svg>
+      <div class="ts-legend" id="ts-legend"></div>
+    </section>
+
+  </main>
+
+  <!-- ── Loading / error overlay ──────────────────────────────── -->
+  <div id="overlay">
+    <div id="overlay-content">
+      <div id="spinner"></div>
+      <p id="overlay-msg">Loading climate data…</p>
+      <div id="progress-container">
+        <div id="progress-bar"></div>
+      </div>
+      <div id="progress-details">0%</div>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

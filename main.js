@@ -1,0 +1,908 @@
+/**
+ * main.js  —  CMIP6 Temperature Scenario Explorer
+ *
+ * Loads pre-exported CMIP6 data (data/cmip6_tas_annual.bin, data/cmip6_meta.json)
+ * then renders:
+ *   • A 2D raster heatmap showing ΔT = scenario A − scenario B
+ *   • A colour bar legend with dynamic scale
+ *   • A latitude-band bar chart
+ *   • A global-mean time-series line chart
+ *
+ * Only D3.js (v7) is used for the visualisation.
+ */
+
+// ── Constants ───────────────────────────────────────────────────────────
+const META_URL = "data/cmip6_meta.json";
+const BIN_URL  = "data/cmip6_tas_annual.bin";
+
+const SCENARIO_COLORS = {
+  ssp126: "#22d3ee",
+  ssp245: "#cbda23",
+  ssp370: "#fb923c",
+  ssp585: "#f43f5e",
+};
+
+// lat bands for the bar chart
+const BANDS = [
+  { label: "90°S–60°S", lo: -90, hi: -60 },
+  { label: "60°S–30°S", lo: -60, hi: -30 },
+  { label: "30°S–0°",   lo: -30, hi:   0 },
+  { label: "0°–30°N",   lo:   0, hi:  30 },
+  { label: "30°N–60°N", lo:  30, hi:  60 },
+  { label: "60°N–90°N", lo:  60, hi:  90 },
+];
+
+// ── State ───────────────────────────────────────────────────────────────
+let appData   = null;   // the full dataset payload
+let worldTopo = null;   // world boundaries TopoJSON
+let scenarioA = null;
+let scenarioB = null;
+let currentYear = 2015;
+let playTimer  = null;
+
+// ── D3 selections / scales (created once, updated on change) ────────────
+let mapSvg, mapG, mapWidth, mapHeight;
+let colorScale;
+let bandSvg;
+let tsSvg;
+let yearLineG;   // group for the vertical year marker on the ts chart
+let tsScales;    // { x, y } for the ts chart
+let mapZoom;     // d3.zoom instance for the map
+
+// ── Data Loading & Streaming Progress ──────────────────────────────────
+async function loadDataset() {
+  // 1. Fetch metadata and world country boundaries in parallel (instant)
+  updateProgress(0, 38043648, "Loading metadata…");
+  const [metaRes, worldRes] = await Promise.all([
+    fetch(META_URL),
+    fetch("data/countries-110m.json").catch(() => null)
+  ]);
+  if (!metaRes.ok) throw new Error(`Could not load ${META_URL}`);
+  const metaJson = await metaRes.json();
+  if (worldRes && worldRes.ok) {
+    try {
+      worldTopo = await worldRes.json();
+    } catch {}
+  }
+
+  // Exact binary size from dimensions: 4 scenarios * 86 years * 192 lats * 288 lons * 2 bytes
+  const total = metaJson.scenarios.length * metaJson.years.length * metaJson.nLats * metaJson.nLons * 2;
+
+  // 2. Stream binary dataset with smooth animated progress
+  const binRes = await fetch(BIN_URL);
+  if (!binRes.ok) throw new Error(`Could not load ${BIN_URL}`);
+
+  const reader = binRes.body.getReader();
+  const allBytes = new Uint8Array(total);
+  let loaded = 0;
+  let lastYield = performance.now();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    allBytes.set(value, loaded);
+    loaded += value.length;
+
+    const now = performance.now();
+    if (now - lastYield > 25) {
+      lastYield = now;
+      updateProgress(loaded, total, "Downloading climate dataset…");
+      // Yield to browser event loop so DOM updates paint on screen
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // Ensure 100% full bar is displayed and hold briefly so the user sees it reach the end
+  updateProgress(total, total, "Initializing climate visualizer…");
+  await new Promise(r => setTimeout(r, 250));
+
+  const binaryData = new Int16Array(allBytes.buffer, allBytes.byteOffset, allBytes.byteLength / 2);
+
+  return {
+    isBinary: true,
+    meta: metaJson.meta,
+    scenariosList: metaJson.scenarios,
+    binaryData: binaryData,
+    scale: metaJson.scale || 100
+  };
+}
+
+// ── Bootstrap ───────────────────────────────────────────────────────────
+async function init() {
+  try {
+    appData = await loadDataset();
+  } catch (e) {
+    showOverlay(
+      "⚠️  Climate data not found or failed to load.\n\n" +
+      "Please run  export_data.py  in your Python environment first,\n" +
+      "then serve this folder with a local HTTP server:\n\n" +
+      "  python -m http.server 8080\n\n" +
+      `Details: ${e.message}`,
+      true
+    );
+    return;
+  }
+
+  buildUI();
+  buildMap();
+  buildBandChart();
+  buildTimeSeries();
+  update();
+
+  hideOverlay();
+}
+
+// ── UI: populate scenario selectors ────────────────────────────────────
+function buildUI() {
+  const { scenarios } = appData.meta;
+  const ids = Object.keys(scenarios);
+
+  // Default selection: first two scenarios
+  scenarioA = ids[ids.length - 1];   // e.g. ssp585 (most dramatic)
+  scenarioB = ids[0];                // e.g. ssp126
+
+  for (const sel of ["scenarioA", "scenarioB"]) {
+    const el = document.getElementById(sel);
+    ids.forEach(id => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = `${scenarios[id]}`;
+      el.appendChild(opt);
+    });
+  }
+
+  document.getElementById("scenarioA").value = scenarioA;
+  document.getElementById("scenarioB").value = scenarioB;
+  updateTagLabels();
+
+  document.getElementById("scenarioA").addEventListener("change", e => {
+    scenarioA = e.target.value;
+    updateTagLabels();
+    update();
+  });
+
+  document.getElementById("scenarioB").addEventListener("change", e => {
+    scenarioB = e.target.value;
+    updateTagLabels();
+    update();
+  });
+
+  // Year slider
+  const slider = document.getElementById("year-slider");
+  const { years } = appData.meta;
+  slider.min  = years[0];
+  slider.max  = years[years.length - 1];
+  slider.value = currentYear = Math.min(2015, years[years.length - 1]);
+  document.getElementById("year-display").textContent = currentYear;
+
+  slider.addEventListener("input", () => {
+    currentYear = +slider.value;
+    document.getElementById("year-display").textContent = currentYear;
+    update();
+  });
+
+  // Play button
+  document.getElementById("btn-play").addEventListener("click", togglePlay);
+}
+
+function updateTagLabels() {
+  document.getElementById("tagA-label").textContent =
+    scenarioA.toUpperCase();
+  document.getElementById("tagB-label").textContent =
+    scenarioB.toUpperCase();
+}
+
+// ── Map / Image Plot ───────────────────────────────────────────────────
+const SVG_W = 880;
+const SVG_H = 460;
+const PLOT_MARGIN = { top: 40, right: 90, bottom: 30, left: 30 };
+const PLOT_W = SVG_W - PLOT_MARGIN.left - PLOT_MARGIN.right;
+const PLOT_H = SVG_H - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+
+function buildMap() {
+  mapSvg = d3.select("#map-svg")
+    .attr("viewBox", `0 0 ${SVG_W} ${SVG_H}`)
+    .attr("preserveAspectRatio", "xMidYMid meet")
+    .style("cursor", "grab");
+
+  mapSvg.selectAll("*").remove();
+
+  // ── Defs: gradient + clip path ────────────────────────────────────────
+  const defs = mapSvg.append("defs");
+
+  // Clip path so zoomed content never bleeds outside the plot area
+  defs.append("clipPath")
+    .attr("id", "plot-clip")
+    .append("rect")
+    .attr("x", PLOT_MARGIN.left)
+    .attr("y", PLOT_MARGIN.top)
+    .attr("width", PLOT_W)
+    .attr("height", PLOT_H);
+
+  // ── Static white background (outside zoom group) ──────────────────────
+  mapSvg.append("rect")
+    .attr("x", PLOT_MARGIN.left)
+    .attr("y", PLOT_MARGIN.top)
+    .attr("width", PLOT_W)
+    .attr("height", PLOT_H)
+    .attr("fill", "#fff")
+    .attr("stroke", "none");
+
+  // ── Clip wrapper (static, never transformed) ─────────────────────────
+  // The clip-path MUST be on an element that has no d3.zoom transform applied
+  // to it. If clip-path is on the zoom group itself, SVG resolves clipPath
+  // coordinates in the element's own (transformed) coordinate system, so the
+  // clip rect moves with the zoom — the wrong behaviour. By putting it on a
+  // static parent wrapper the clip rect stays fixed in SVG root coordinates.
+  const clipWrapper = mapSvg.append("g")
+    .attr("clip-path", "url(#plot-clip)");
+
+  // ── Zoom group (inside the static clip wrapper) ───────────────────────
+  // This group receives the CSS transform from d3.zoom
+  const zoomG = clipWrapper.append("g")
+    .attr("id", "map-zoom-group");
+
+  // Raster image element for the 2D temperature grid
+  zoomG.append("image")
+    .attr("id", "plot-image")
+    .attr("x", PLOT_MARGIN.left)
+    .attr("y", PLOT_MARGIN.top)
+    .attr("width", PLOT_W)
+    .attr("height", PLOT_H)
+    .attr("preserveAspectRatio", "none");
+
+  // Country borders and coastlines overlaid with exact equirectangular projection
+  if (worldTopo && typeof topojson !== "undefined") {
+    const proj = d3.geoEquirectangular()
+      .fitExtent([
+        [PLOT_MARGIN.left, PLOT_MARGIN.top],
+        [PLOT_MARGIN.left + PLOT_W, PLOT_MARGIN.top + PLOT_H]
+      ], { type: "Sphere" });
+    const pathGen = d3.geoPath(proj);
+
+    // Coastlines / land outlines
+    if (worldTopo.objects.land) {
+      zoomG.append("path")
+        .datum(topojson.feature(worldTopo, worldTopo.objects.land))
+        .attr("class", "coastlines")
+        .attr("d", pathGen);
+    }
+
+    // Country interior borders
+    if (worldTopo.objects.countries) {
+      zoomG.append("path")
+        .datum(topojson.mesh(worldTopo, worldTopo.objects.countries, (a, b) => a !== b))
+        .attr("class", "country-borders")
+        .attr("d", pathGen);
+    }
+  }
+
+  // ── Static overlay border (drawn on top of zoom group, stays fixed) ───
+  mapSvg.append("rect")
+    .attr("x", PLOT_MARGIN.left)
+    .attr("y", PLOT_MARGIN.top)
+    .attr("width", PLOT_W)
+    .attr("height", PLOT_H)
+    .attr("fill", "none")
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 1)
+    .attr("pointer-events", "none");
+
+  // ── Axes groups (outside zoom group, stay fixed) ──────────────────────
+  mapSvg.append("g").attr("id", "map-x-axis")
+    .attr("class", "axis")
+    .attr("transform", `translate(0, ${PLOT_MARGIN.top + PLOT_H})`);
+
+  mapSvg.append("g").attr("id", "map-y-axis")
+    .attr("class", "axis")
+    .attr("transform", `translate(${PLOT_MARGIN.left}, 0)`);
+
+  // ── Plot title (fixed) ────────────────────────────────────────────────
+  mapSvg.append("text")
+    .attr("id", "map-title")
+    .attr("class", "plot-title")
+    .attr("x", PLOT_MARGIN.left + PLOT_W / 2)
+    .attr("y", 25)
+    .attr("text-anchor", "middle");
+
+  // ── Colorbar group (fixed, outside zoom group) ────────────────────────
+  const cbarG = mapSvg.append("g").attr("id", "map-colorbar");
+  const cbarX = PLOT_MARGIN.left + PLOT_W + 18;
+  const cbarW = 14;
+
+  cbarG.append("rect")
+    .attr("id", "cbar-rect")
+    .attr("x", cbarX)
+    .attr("y", PLOT_MARGIN.top)
+    .attr("width", cbarW)
+    .attr("height", PLOT_H)
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 0.5);
+
+  cbarG.append("g")
+    .attr("id", "cbar-axis")
+    .attr("class", "axis")
+    .attr("transform", `translate(${cbarX + cbarW}, 0)`);
+
+  cbarG.append("text")
+    .attr("id", "cbar-label")
+    .attr("class", "axis-label")
+    .attr("x", cbarX + cbarW + 42)
+    .attr("y", PLOT_MARGIN.top + PLOT_H / 2)
+    .attr("transform", `rotate(90, ${cbarX + cbarW + 42}, ${PLOT_MARGIN.top + PLOT_H / 2})`)
+    .attr("text-anchor", "middle")
+    .text("Temperature Difference (°C)");
+
+  // ── d3.zoom setup ─────────────────────────────────────────────────────
+  // Transparent hit-area rect covering ONLY the plot region.
+  // Zoom/pan events are captured here so the surrounding margin space
+  // (axes, colorbar, title) does not respond to scroll or drag.
+  const zoomHitRect = mapSvg.append("rect")
+    .attr("id", "zoom-hit-rect")
+    .attr("x", PLOT_MARGIN.left)
+    .attr("y", PLOT_MARGIN.top)
+    .attr("width", PLOT_W)
+    .attr("height", PLOT_H)
+    .attr("fill", "transparent")   // invisible but pointer-events-active
+    .style("cursor", "grab");
+
+  mapZoom = d3.zoom()
+    // extent() tells d3.zoom the viewport bounds in SVG coordinates.
+    // Without this, d3.zoom falls back to [clientWidth, clientHeight] of the
+    // element, which is 0 for an SVG <rect>, causing a non-identity transform
+    // at scale=1 that visually misaligns the map when first loaded or fully zoomed out.
+    .extent([
+      [PLOT_MARGIN.left, PLOT_MARGIN.top],
+      [PLOT_MARGIN.left + PLOT_W, PLOT_MARGIN.top + PLOT_H]
+    ])
+    .scaleExtent([1, 16])
+    // translateExtent keeps panning bounded — the content edges can't scroll
+    // outside the viewport bounds defined above.
+    .translateExtent([
+      [PLOT_MARGIN.left, PLOT_MARGIN.top],
+      [PLOT_MARGIN.left + PLOT_W, PLOT_MARGIN.top + PLOT_H]
+    ])
+    .on("zoom", (event) => {
+      d3.select("#map-zoom-group").attr("transform", event.transform);
+    })
+    .on("start", () => zoomHitRect.style("cursor", "grabbing"))
+    .on("end",   () => zoomHitRect.style("cursor", "grab"));
+
+  // Apply zoom to the hit rect, NOT the full SVG
+  zoomHitRect.call(mapZoom);
+
+  // Double-click on the plot area resets zoom
+  zoomHitRect.on("dblclick.zoom", () => {
+    zoomHitRect.transition().duration(400).call(mapZoom.transform, d3.zoomIdentity);
+  });
+
+  // Remove the default cursor style we set on the SVG itself
+  mapSvg.style("cursor", null);
+}
+
+// ── Map update (raster heatmap similar to matplotlib .plot()) ──────────────────
+function getGrid(scenario, year) {
+  if (!appData.isBinary) {
+    return appData.data[scenario]?.[String(year)] ?? null;
+  }
+  const sIdx = appData.scenariosList.indexOf(scenario);
+  const yIdx = year - appData.meta.years[0];
+  if (sIdx === -1 || yIdx < 0 || yIdx >= appData.meta.years.length) return null;
+  const nLats = appData.meta.lats.length;
+  const nLons = appData.meta.lons.length;
+  const start = (sIdx * appData.meta.years.length + yIdx) * (nLats * nLons);
+  const raw = appData.binaryData;
+  const scale = appData.scale || 100;
+  const grid = new Array(nLats);
+  for (let r = 0; r < nLats; r++) {
+    const row = new Float32Array(nLons);
+    const rowStart = start + r * nLons;
+    for (let c = 0; c < nLons; c++) {
+      row[c] = raw[rowStart + c] / scale;
+    }
+    grid[r] = row;
+  }
+  return grid;
+}
+
+function computeDiff(year) {
+  const { lats, lons } = appData.meta;
+  const nLats = lats.length;
+  const nLons = lons.length;
+
+  if (appData.isBinary) {
+    const sA = appData.scenariosList.indexOf(scenarioA);
+    const sB = appData.scenariosList.indexOf(scenarioB);
+    const yIdx = year - appData.meta.years[0];
+    if (sA === -1 || sB === -1 || yIdx < 0 || yIdx >= appData.meta.years.length) return null;
+
+    const startA = (sA * appData.meta.years.length + yIdx) * (nLats * nLons);
+    const startB = (sB * appData.meta.years.length + yIdx) * (nLats * nLons);
+    const raw = appData.binaryData;
+    const scale = appData.scale || 100;
+
+    const diff = new Array(nLats);
+    for (let r = 0; r < nLats; r++) {
+      const row = new Float32Array(nLons);
+      const rowStartA = startA + r * nLons;
+      const rowStartB = startB + r * nLons;
+      for (let c = 0; c < nLons; c++) {
+        row[c] = (raw[rowStartA + c] - raw[rowStartB + c]) / scale;
+      }
+      diff[r] = row;
+    }
+    return { diff, lats, lons };
+  } else {
+    const A = getGrid(scenarioA, year);
+    const B = getGrid(scenarioB, year);
+    if (!A || !B) return null;
+
+    const diff = [];
+    for (let i = 0; i < lats.length; i++) {
+      const row = new Float32Array(nLons);
+      for (let j = 0; j < nLons; j++) {
+        row[j] = A[i][j] - B[i][j];
+      }
+      diff.push(row);
+    }
+    return { diff, lats, lons };
+  }
+}
+
+function updateMap() {
+  const result = computeDiff(currentYear);
+  if (!result) return;
+
+  const { diff, lats, lons } = result;
+  let minVal = Infinity;
+  let maxVal = -Infinity;
+  for (let r = 0; r < diff.length; r++) {
+    const row = diff[r];
+    for (let c = 0; c < row.length; c++) {
+      const v = row[c];
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
+    }
+  }
+
+  // Dynamic colormap:
+  // If difference is non-negative (e.g. SSP5-8.5 minus SSP1-2.6), use Reds like in the notebook
+  let domain;
+  const absMax = Math.max(Math.abs(minVal), Math.abs(maxVal), 0.5);
+  colorScale = d3.scaleDiverging(t => d3.interpolateRdBu(1 - t)).domain([-absMax, 0, absMax]);
+  domain = [-absMax, absMax];
+
+  // 1. Draw raw grid onto an offscreen canvas
+  // Shift longitudes by 180° so (lon: 0, lat: 0) is at the exact center of the map
+  const nRows = diff.length;       // 48 (lats)
+  const nCols = diff[0].length;    // 72 (lons)
+  const halfCols = Math.floor(nCols / 2);
+
+  const rawCanvas = document.createElement("canvas");
+  rawCanvas.width = nCols;
+  rawCanvas.height = nRows;
+  const rawCtx = rawCanvas.getContext("2d");
+  const imgData = rawCtx.createImageData(nCols, nRows);
+  const pixels = imgData.data;
+
+  for (let y = 0; y < nRows; y++) {
+    // In canvas, y=0 is the top (North pole / Arctic, index nRows-1)
+    const r = (nRows - 1) - y;
+    for (let x = 0; x < nCols; x++) {
+      // Cyclically shift longitude by 180° (halfCols):
+      // x=0 is -180°, x=halfCols is 0° (center), x=nCols-1 is +180°
+      const srcCol = (x + halfCols) % nCols;
+      const val = diff[r][srcCol];
+      const rgb = d3.rgb(colorScale(val));
+      const idx = (y * nCols + x) * 4;
+      pixels[idx]     = rgb.r;
+      pixels[idx + 1] = rgb.g;
+      pixels[idx + 2] = rgb.b;
+      pixels[idx + 3] = 255;
+    }
+  }
+
+  rawCtx.putImageData(imgData, 0, 0);
+
+  // High-res bicubic/bilinear smoothing (similar to matplotlib's interpolation)
+  const hiResCanvas = document.createElement("canvas");
+  hiResCanvas.width = PLOT_W * 2;   // 2x Retina resolution
+  hiResCanvas.height = PLOT_H * 2;
+  const hiResCtx = hiResCanvas.getContext("2d");
+  hiResCtx.imageSmoothingEnabled = true;
+  hiResCtx.imageSmoothingQuality = "high";
+  hiResCtx.drawImage(rawCanvas, 0, 0, hiResCanvas.width, hiResCanvas.height);
+
+  // Set image href
+  d3.select("#plot-image").attr("href", hiResCanvas.toDataURL());
+
+  // 2. Update Title
+  d3.select("#map-title")
+    .text(`Temperature Difference: ${scenarioA.toUpperCase()} − ${scenarioB.toUpperCase()} (${currentYear})`);
+
+  // 3. Update Colorbar
+  updatePlotColorbar(domain);
+}
+
+function updatePlotColorbar(domain) {
+  const [dMin, dMax] = domain;
+  const defs = mapSvg.select("defs");
+  defs.select("#plot-cbar-grad").remove();
+
+  const grad = defs.append("linearGradient")
+    .attr("id", "plot-cbar-grad")
+    .attr("x1", "0%").attr("y1", "100%")
+    .attr("x2", "0%").attr("y2", "0%");
+
+  const nStops = 100;
+  for (let i = 0; i <= nStops; i++) {
+    const t = i / nStops;
+    const val = dMin + t * (dMax - dMin);
+    grad.append("stop")
+      .attr("offset", `${t * 100}%`)
+      .attr("stop-color", colorScale(val));
+  }
+
+  d3.select("#cbar-rect").attr("fill", "url(#plot-cbar-grad)");
+
+  const cbarScale = d3.scaleLinear()
+    .domain([dMin, dMax])
+    .range([PLOT_MARGIN.top + PLOT_H, PLOT_MARGIN.top]);
+
+  const cbarAxis = d3.axisRight(cbarScale)
+    .ticks(6)
+    .tickFormat(d => `${d >= 0 ? "" : ""}${d.toFixed(1)}`);
+
+  d3.select("#cbar-axis").call(cbarAxis);
+}
+
+// ── Band Chart ───────────────────────────────────────────────────────────
+function buildBandChart() {
+  bandSvg = d3.select("#band-chart");
+}
+
+function updateBandChart() {
+  const result = computeDiff(currentYear);
+  if (!result) return;
+
+  const { diff, lats, lons } = result;
+  const nLon = lons.length;
+
+  // Area-weight within each band by cos(lat)
+  function bandMean(lo, hi) {
+    let sumW = 0, sumV = 0;
+    for (let i = 0; i < lats.length; i++) {
+      const lat = lats[i];
+      if (lat < lo || lat >= hi) continue;
+      const w = Math.cos(lat * Math.PI / 180);
+      for (let j = 0; j < nLon; j++) {
+        sumV += diff[i][j] * w;
+        sumW += w;
+      }
+    }
+    return sumW > 0 ? sumV / sumW : 0;
+  }
+
+  const data = BANDS.map(b => ({
+    label: b.label,
+    value: bandMean(b.lo, b.hi),
+  }));
+
+  const svgEl = bandSvg.node();
+  const W = svgEl.clientWidth  || 208;
+  const H = svgEl.clientHeight || 220;
+  bandSvg.attr("viewBox", `0 0 ${W} ${H}`);
+
+  // Reserve 62px on the left for the widest label (e.g. "90°S–60°S"), and 42px on the right for values
+  const margin = { top: 8, right: 42, bottom: 8, left: 62 };
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top  - margin.bottom;
+
+  const absMax = Math.max(0.1, d3.max(data, d => Math.abs(d.value)));
+  const xScale = d3.scaleLinear().domain([-absMax, absMax]).range([0, iW]);
+  const yScale = d3.scaleBand()
+    .domain(data.map(d => d.label))
+    .range([0, iH])
+    .padding(0.28);
+
+  bandSvg.selectAll("*").remove();
+  const g = bandSvg.append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Zero line
+  g.append("line")
+    .attr("x1", xScale(0)).attr("x2", xScale(0))
+    .attr("y1", 0).attr("y2", iH)
+    .attr("stroke", "var(--border)")
+    .attr("stroke-width", 1)
+    .attr("stroke-dasharray", "2,2");
+
+  // Bars
+  g.selectAll("rect")
+    .data(data)
+    .join("rect")
+    .attr("y", d => yScale(d.label))
+    .attr("height", yScale.bandwidth())
+    .attr("x", d => d.value >= 0 ? xScale(0) : xScale(d.value))
+    .attr("width", d => Math.max(1, Math.abs(xScale(d.value) - xScale(0))))
+    .attr("fill", d => d.value >= 0 ? "var(--tagA)" : "var(--tagB)")
+    .attr("rx", 2);
+
+  // Value labels (right-aligned against right boundary)
+  g.selectAll("text.val")
+    .data(data)
+    .join("text")
+    .attr("class", "val")
+    .attr("y", d => yScale(d.label) + yScale.bandwidth() / 2 + 4)
+    .attr("x", iW + margin.right - 2)
+    .attr("text-anchor", "end")
+    .attr("fill", d => d.value >= 0 ? "var(--tagA)" : "var(--tagB)")
+    .attr("font-size", "0.68rem")
+    .attr("font-weight", "600")
+    .text(d => `${d.value > 0 ? "+" : ""}${d.value.toFixed(2)}°`);
+
+  // Y axis labels (left-aligned starting at 2px from the SVG edge, never cut off)
+  g.selectAll("text.band")
+    .data(data)
+    .join("text")
+    .attr("class", "band")
+    .attr("x", -margin.left + 2)
+    .attr("y", d => yScale(d.label) + yScale.bandwidth() / 2 + 4)
+    .attr("text-anchor", "start")
+    .attr("fill", "var(--textSec)")
+    .attr("font-size", "0.66rem")
+    .text(d => d.label);
+}
+
+// ── Global mean ──────────────────────────────────────────────────────────
+function updateGlobalMean() {
+  const result = computeDiff(currentYear);
+  if (!result) return;
+
+  const { diff, lats, lons } = result;
+  const nLon = lons.length;
+
+  let sumW = 0, sumV = 0;
+  for (let i = 0; i < lats.length; i++) {
+    const w = Math.cos(lats[i] * Math.PI / 180);
+    for (let j = 0; j < nLon; j++) {
+      sumV += diff[i][j] * w;
+      sumW += w;
+    }
+  }
+  const mean = sumW > 0 ? sumV / sumW : 0;
+  const el = document.getElementById("global-mean-value");
+  el.textContent = `${mean > 0 ? "+" : ""}${mean.toFixed(2)}`;
+  el.style.color = mean > 0 ? "var(--tagA)" : mean < -0.05 ? "var(--tagB)" : "var(--accent)";
+}
+
+// ── Time series ──────────────────────────────────────────────────────────
+function buildTimeSeries() {
+  const svgEl = document.getElementById("ts-svg");
+  const W = svgEl.clientWidth || 900;
+  const H = 160;
+  tsSvg = d3.select("#ts-svg")
+    .attr("viewBox", `0 0 ${W} ${H}`);
+
+  const margin = { top: 10, right: 20, bottom: 28, left: 44 };
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top  - margin.bottom;
+
+  const { years } = appData.meta;
+
+  // Global mean temperature for each scenario over all years
+  function scenarioGlobalMeans(expId) {
+    const lats = appData.meta.lats;
+    const nLats = lats.length;
+    const nLons = appData.meta.lons.length;
+    const weights = new Float32Array(nLats);
+    let totalWeight = 0;
+    for (let i = 0; i < nLats; i++) {
+      weights[i] = Math.cos(lats[i] * Math.PI / 180);
+      totalWeight += weights[i] * nLons;
+    }
+
+    if (appData.isBinary) {
+      const sIdx = appData.scenariosList.indexOf(expId);
+      const raw = appData.binaryData;
+      const scale = appData.scale || 100;
+      return years.map((year, yIdx) => {
+        const start = (sIdx * years.length + yIdx) * (nLats * nLons);
+        let sum = 0;
+        for (let r = 0; r < nLats; r++) {
+          const w = weights[r];
+          const rowStart = start + r * nLons;
+          let rowSum = 0;
+          for (let c = 0; c < nLons; c++) {
+            rowSum += raw[rowStart + c];
+          }
+          sum += (rowSum / scale) * w;
+        }
+        return { year, val: sum / totalWeight };
+      });
+    } else {
+      return years.map(year => {
+        const grid = getGrid(expId, year);
+        if (!grid) return { year, val: NaN };
+        let sum = 0;
+        for (let i = 0; i < nLats; i++) {
+          const w = weights[i];
+          let rowSum = 0;
+          for (let j = 0; j < nLons; j++) {
+            rowSum += grid[i][j];
+          }
+          sum += rowSum * w;
+        }
+        return { year, val: sum / totalWeight };
+      });
+    }
+  }
+
+  const scenarios = Object.keys(appData.meta.scenarios);
+  const seriesData = {};
+  scenarios.forEach(id => { seriesData[id] = scenarioGlobalMeans(id); });
+
+  // y domain: across all scenarios
+  const allVals = scenarios.flatMap(id => seriesData[id].map(d => d.val)).filter(v => !isNaN(v));
+  const yMin = d3.min(allVals) - 0.3;
+  const yMax = d3.max(allVals) + 0.3;
+
+  const xScale = d3.scaleLinear().domain([years[0], years[years.length - 1]]).range([0, iW]);
+  const yScale = d3.scaleLinear().domain([yMin, yMax]).range([iH, 0]);
+  tsScales = { x: xScale, y: yScale, margin, iH };
+
+  const g = tsSvg.append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Grid lines
+  g.append("g")
+    .attr("class", "axis grid")
+    .attr("transform", `translate(0,${iH})`)
+    .call(
+      d3.axisBottom(xScale)
+        .ticks(8)
+        .tickSize(-iH)
+        .tickFormat(d3.format("d"))
+    )
+    .call(gg => gg.selectAll(".tick line").attr("stroke", "rgba(255,255,255,0.05)"))
+    .call(gg => gg.select(".domain").remove());
+
+  g.append("g")
+    .attr("class", "axis")
+    .call(d3.axisLeft(yScale).ticks(4).tickFormat(d => `${d.toFixed(0)}°`))
+    .call(gg => gg.select(".domain").remove());
+
+  // Lines
+  const line = d3.line().x(d => xScale(d.year)).y(d => yScale(d.val)).curve(d3.curveMonotoneX);
+
+  scenarios.forEach(id => {
+    g.append("path")
+      .datum(seriesData[id])
+      .attr("fill", "none")
+      .attr("stroke", SCENARIO_COLORS[id] || "#888")
+      .attr("stroke-width", 2)
+      .attr("opacity", 0.9)
+      .attr("d", line);
+  });
+
+  // Year marker line (vertical, draggable by the slider)
+  yearLineG = g.append("g").attr("class", "year-marker");
+  yearLineG.append("line")
+    .attr("class", "year-line")
+    .attr("y1", 0).attr("y2", iH);
+
+  // Legend
+  const legendEl = document.getElementById("ts-legend");
+  legendEl.innerHTML = "";
+  scenarios.forEach(id => {
+    const item = document.createElement("div");
+    item.className = "ts-legend-item";
+    item.innerHTML = `
+      <div class="ts-legend-swatch" style="background:${SCENARIO_COLORS[id] || '#888'}"></div>
+      <span>${appData.meta.scenarios[id]}</span>
+    `;
+    legendEl.appendChild(item);
+  });
+}
+
+function updateTimeSeries() {
+  if (!tsScales) return;
+  const { x } = tsScales;
+  yearLineG.select("line")
+    .attr("x1", x(currentYear))
+    .attr("x2", x(currentYear));
+}
+
+// ── Main update ──────────────────────────────────────────────────────────
+function update() {
+  updateMap();
+  updateBandChart();
+  updateGlobalMean();
+  updateTimeSeries();
+}
+
+// ── Play animation ───────────────────────────────────────────────────────
+function togglePlay() {
+  const btn = document.getElementById("btn-play");
+  if (playTimer) {
+    clearInterval(playTimer);
+    playTimer = null;
+    btn.innerHTML = '<span class="btn-icon">▶</span> Play';
+    btn.classList.remove("playing");
+  } else {
+    btn.innerHTML = '<span class="btn-icon pause-icon">▐▐</span> Pause';
+    btn.classList.add("playing");
+    const { years } = appData.meta;
+    const slider = document.getElementById("year-slider");
+
+    playTimer = setInterval(() => {
+      const nextYear = currentYear >= years[years.length - 1]
+        ? years[0]
+        : currentYear + 1;
+      if (nextYear == years[0]) {
+        clearInterval(playTimer);
+        playTimer = null;
+        btn.innerHTML = '<span class="btn-icon">▶</span> Play';
+        btn.classList.remove("playing");
+        return;
+      };
+      currentYear = nextYear;
+      slider.value = currentYear;
+      document.getElementById("year-display").textContent = currentYear;
+      update();
+    }, 300);
+  }
+}
+
+// ── Overlay & Progress helpers ──────────────────────────────────────────
+function updateProgress(loaded, total, statusText) {
+  const el = document.getElementById("overlay");
+  el.classList.remove("hidden");
+
+  const msgEl = document.getElementById("overlay-msg");
+  if (statusText) msgEl.textContent = statusText;
+
+  const pBar = document.getElementById("progress-bar");
+  const pDetails = document.getElementById("progress-details");
+  const pContainer = document.getElementById("progress-container");
+
+  if (pContainer) pContainer.style.display = "block";
+  if (pDetails) pDetails.style.display = "block";
+
+  const safeTotal = Math.max(1, total || 38043648);
+  const clampedLoaded = Math.min(loaded, safeTotal);
+  const pct = Math.min(100, Math.max(0, Math.round((clampedLoaded / safeTotal) * 100)));
+
+  if (pBar) {
+    pBar.style.width = `${pct}%`;
+  }
+
+  if (pDetails) {
+    pDetails.textContent = `${pct}%`;
+  }
+}
+
+function showOverlay(msg, isError = false) {
+  const el = document.getElementById("overlay");
+  const msgEl = document.getElementById("overlay-msg");
+  const spin = document.getElementById("spinner");
+  const pContainer = document.getElementById("progress-container");
+  const pDetails = document.getElementById("progress-details");
+
+  el.classList.remove("hidden");
+  msgEl.style.whiteSpace = "pre-wrap";
+  msgEl.textContent = msg;
+  spin.style.display = isError ? "none" : "block";
+
+  if (isError) {
+    if (pContainer) pContainer.style.display = "none";
+    if (pDetails) pDetails.style.display = "none";
+  }
+}
+
+function hideOverlay() {
+  document.getElementById("overlay").classList.add("hidden");
+}
+
+// ── Entry point ──────────────────────────────────────────────────────────
+init();
