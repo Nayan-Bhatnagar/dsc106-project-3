@@ -126,6 +126,7 @@ main {
   border-radius: 4px;
   font-weight: 700;
   letter-spacing: 0.04em;
+  transition: background-color 0.2s ease;
 }
 .tagA { background: var(--tagA); color: #fff; }
 .tagB { background: var(--tagB); color: #fff; }
@@ -330,6 +331,12 @@ button.playing:hover { background: #b91c1c; }
   display: block;
   color: var(--accent);
   margin-bottom: 3px;
+}
+.tooltip strong.pos {
+  color: #dc2626;
+}
+.tooltip strong.neg {
+  color: var(--accent);
 }
 
 /* ── Info panel ───────────────────────────────────────────── */

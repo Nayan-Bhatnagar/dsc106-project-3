@@ -40,6 +40,8 @@ let scenarioB = null;
 let currentYear = 2015;
 let playTimer  = null;
 let currentDiff = null;   // latest {diff, lats, lons} for tooltip lookups
+let lastMousePos = null;  // last cursor position { clientX, clientY } for live tooltip updates
+let isZoomingOrPanning = false; // true while panning or zooming to hide tooltip
 
 // ── D3 selections / scales (created once, updated on change) ────────────
 let mapSvg, mapG, mapWidth, mapHeight;
@@ -206,10 +208,20 @@ function buildUI() {
 }
 
 function updateTagLabels() {
-  document.getElementById("tagA-label").textContent =
-    scenarioA.toUpperCase();
-  document.getElementById("tagB-label").textContent =
-    scenarioB.toUpperCase();
+  const elA = document.getElementById("tagA-label");
+  const elB = document.getElementById("tagB-label");
+
+  if (elA) {
+    elA.textContent = scenarioA.toUpperCase();
+    const colorA = d3.color(SCENARIO_COLORS[scenarioA] || "#ea6600");
+    elA.style.backgroundColor = colorA ? colorA.darker(0.8).formatHex() : (SCENARIO_COLORS[scenarioA] || "#ea6600");
+  }
+
+  if (elB) {
+    elB.textContent = scenarioB.toUpperCase();
+    const colorB = d3.color(SCENARIO_COLORS[scenarioB] || "#0284c7");
+    elB.style.backgroundColor = colorB ? colorB.darker(0.8).formatHex() : (SCENARIO_COLORS[scenarioB] || "#0284c7");
+  }
 }
 
 // ── Map / Image Plot ───────────────────────────────────────────────────
@@ -218,6 +230,18 @@ const SVG_H = 460;
 const PLOT_MARGIN = { top: 40, right: 90, bottom: 30, left: 30 };
 const PLOT_W = SVG_W - PLOT_MARGIN.left - PLOT_MARGIN.right;
 const PLOT_H = SVG_H - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+
+function updateLastMousePosFromEvent(e) {
+  if (!e) return;
+  const ev = e.sourceEvent || e;
+  if (typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+    lastMousePos = { clientX: ev.clientX, clientY: ev.clientY };
+  } else if (ev.touches && ev.touches.length > 0) {
+    lastMousePos = { clientX: ev.touches[0].clientX, clientY: ev.touches[0].clientY };
+  } else if (ev.changedTouches && ev.changedTouches.length > 0) {
+    lastMousePos = { clientX: ev.changedTouches[0].clientX, clientY: ev.changedTouches[0].clientY };
+  }
+}
 
 function buildMap() {
   mapSvg = d3.select("#map-svg")
@@ -382,14 +406,34 @@ function buildMap() {
       [PLOT_MARGIN.left, PLOT_MARGIN.top],
       [PLOT_MARGIN.left + PLOT_W, PLOT_MARGIN.top + PLOT_H]
     ])
+    .on("start", (event) => {
+      updateLastMousePosFromEvent(event);
+      isZoomingOrPanning = true;
+      d3.select("#tooltip").classed("hidden", true);
+      zoomHitRect.style("cursor", "grabbing");
+    })
     .on("zoom", (event) => {
+      updateLastMousePosFromEvent(event);
       d3.select("#map-zoom-group").attr("transform", event.transform);
     })
-    .on("start", () => zoomHitRect.style("cursor", "grabbing"))
-    .on("end",   () => zoomHitRect.style("cursor", "grab"));
+    .on("end", (event) => {
+      updateLastMousePosFromEvent(event);
+      isZoomingOrPanning = false;
+      zoomHitRect.style("cursor", "grab");
+      updateTooltip();
+    });
 
   // Apply zoom to the hit rect, NOT the full SVG
   zoomHitRect.call(mapZoom);
+
+  // Prevent browser window scrolling when wheeling/zooming over the scrollable map area
+  zoomHitRect.node().addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+    },
+    { passive: false }
+  );
 
   // Double-click on the plot area resets zoom
   zoomHitRect.on("dblclick.zoom", () => {
@@ -403,63 +447,80 @@ function buildMap() {
   // The map is a raster image, so there are no per-cell elements to hover.
   // Instead we read the mouse position over the plot, undo the current zoom
   // transform, convert plot pixels -> lon/lat, and look up the diff value.
-  const tooltip = d3.select("#tooltip");
-
   zoomHitRect
     .on("mousemove", (event) => {
-      if (!currentDiff) return;
-
-      // Mouse position in SVG coordinates
-      const [mx, my] = d3.pointer(event, mapSvg.node());
-
-      // Undo the zoom/pan transform so we get the position on the un-zoomed map
-      const t = d3.zoomTransform(zoomHitRect.node());
-      const px = (mx - t.x) / t.k;
-      const py = (my - t.y) / t.k;
-
-      // Fraction across the plot area (0..1)
-      const fx = (px - PLOT_MARGIN.left) / PLOT_W;
-      const fy = (py - PLOT_MARGIN.top)  / PLOT_H;
-      if (fx < 0 || fx > 1 || fy < 0 || fy > 1) { tooltip.classed("hidden", true); return; }
-
-      const { diff, lats, lons } = currentDiff;
-      const nLats = lats.length;
-      const nLons = lons.length;
-
-      // fy=0 is the top of the plot (North). Row 0 of diff is the southernmost
-      // lat, so flip: top of plot -> last row.
-      const rowFromTop = Math.min(nLats - 1, Math.floor(fy * nLats));
-      const r = (nLats - 1) - rowFromTop;
-
-      // The image is drawn with longitudes shifted by 180° (center = lon 0).
-      // Undo that shift to get the source column in the diff grid.
-      const halfCols = Math.floor(nLons / 2);
-      const xCol = Math.min(nLons - 1, Math.floor(fx * nLons));
-      const srcCol = (xCol + halfCols) % nLons;
-
-      const val = diff[r][srcCol];
-      const lat = lats[r];
-      let lon = lons[srcCol];
-      if (lon > 180) lon -= 360;   // show -180..180 instead of 0..360
-
-      // Position the tooltip using real pixel coords inside #map-container.
-      // (mx/my are viewBox units, which differ from on-screen pixels.)
-      const container = document.getElementById("map-container");
-      const rect = container.getBoundingClientRect();
-      const cx = event.clientX - rect.left;
-      const cy = event.clientY - rect.top;
-
-      tooltip
-        .classed("hidden", false)
-        .style("left", (cx + 14) + "px")
-        .style("top",  (cy + 14) + "px")
-        .html(
-          `<strong>${val >= 0 ? "+" : ""}${val.toFixed(2)} °C</strong>` +
-          `${Math.abs(lat).toFixed(0)}°${lat >= 0 ? "N" : "S"}, ` +
-          `${Math.abs(lon).toFixed(0)}°${lon >= 0 ? "E" : "W"}`
-        );
+      updateLastMousePosFromEvent(event);
+      updateTooltip();
     })
-    .on("mouseleave", () => tooltip.classed("hidden", true));
+    .on("mouseleave", () => {
+      lastMousePos = null;
+      d3.select("#tooltip").classed("hidden", true);
+    });
+}
+
+function updateTooltip() {
+  const tooltip = d3.select("#tooltip");
+  if (!lastMousePos || !currentDiff || isZoomingOrPanning) {
+    tooltip.classed("hidden", true);
+    return;
+  }
+
+  // Mouse position in SVG coordinates
+  const [mx, my] = d3.pointer(lastMousePos, mapSvg.node());
+
+  // Undo the zoom/pan transform so we get the position on the un-zoomed map
+  const hitNode = document.getElementById("zoom-hit-rect");
+  if (!hitNode) return;
+  const t = d3.zoomTransform(hitNode);
+  const px = (mx - t.x) / t.k;
+  const py = (my - t.y) / t.k;
+
+  // Fraction across the plot area (0..1)
+  const fx = (px - PLOT_MARGIN.left) / PLOT_W;
+  const fy = (py - PLOT_MARGIN.top)  / PLOT_H;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) {
+    tooltip.classed("hidden", true);
+    return;
+  }
+
+  const { diff, lats, lons } = currentDiff;
+  const nLats = lats.length;
+  const nLons = lons.length;
+
+  // fy=0 is the top of the plot (North). Row 0 of diff is the southernmost
+  // lat, so flip: top of plot -> last row.
+  const rowFromTop = Math.min(nLats - 1, Math.floor(fy * nLats));
+  const r = (nLats - 1) - rowFromTop;
+
+  // The image is drawn with longitudes shifted by 180° (center = lon 0).
+  // Undo that shift to get the source column in the diff grid.
+  const halfCols = Math.floor(nLons / 2);
+  const xCol = Math.min(nLons - 1, Math.floor(fx * nLons));
+  const srcCol = (xCol + halfCols) % nLons;
+
+  const val = diff[r][srcCol];
+  const lat = lats[r];
+  let lon = lons[srcCol];
+  if (lon > 180) lon -= 360;   // show -180..180 instead of 0..360
+
+  // Position the tooltip using real pixel coords inside #map-container.
+  // (mx/my are viewBox units, which differ from on-screen pixels.)
+  const container = document.getElementById("map-container");
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const cx = lastMousePos.clientX - rect.left;
+  const cy = lastMousePos.clientY - rect.top;
+
+  const tempColor = val > 0 ? "#dc2626" : "var(--accent)";
+  tooltip
+    .classed("hidden", false)
+    .style("left", (cx + 14) + "px")
+    .style("top",  (cy + 14) + "px")
+    .html(
+      `<strong class="${val > 0 ? "pos" : "neg"}" style="color: ${tempColor};">${val >= 0 ? "+" : ""}${val.toFixed(2)} °C</strong>` +
+      `${Math.abs(lat).toFixed(0)}°${lat >= 0 ? "N" : "S"}, ` +
+      `${Math.abs(lon).toFixed(0)}°${lon >= 0 ? "E" : "W"}`
+    );
 }
 
 // ── Map update (raster heatmap similar to matplotlib .plot()) ──────────────────
@@ -566,6 +627,7 @@ function updateMap() {
   if (!result) return;
 
   currentDiff = result;   // keep for tooltip lookups
+  updateTooltip();
 
   const { diff, lats, lons } = result;
 
