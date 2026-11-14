@@ -91,6 +91,45 @@
       <div class="ts-legend" id="ts-legend"></div>
     </section>
 
+    <!-- ── Write-up Section ────────────────────────────────────── -->
+    <section id="writeup-section">
+      <!-- Write-up text will be manually added here -->
+      <h2>Write-Up</h2>
+      <p>
+        Since our data included the geographic coordinates of different temperatures, we decided
+        a map would be the best way to encode location to show the different warming amounts in
+        different regions. While we could have used line charts to show the difference in temperature
+        for different regions over time, this would not be as detailed as showing the data for each
+        coordinate point, and allows the user to choose what region to look at. We encoded the
+        temperature difference using color since we wanted to show the data values for every part
+        of the map in fine detail, which is why we chose a isopleth map, as the data represented
+        continuous numbers. We purposely chose a continuous color scale instead of using bins because
+        using bins made the map very pixelated and unpleasant to look at. We partially dealt with the
+        problem of lower discriminability between colors due to the continuous scale by adding tooltips,
+        so the user can see the exact values by hovering over any part of the map. We also made sure to
+        add zooming and panning to the map so the user could easily see changes in a specific region of
+        the world. Finally, we added an auto-play feature for the years so the user can easily see the
+        trend over time, without having to manually move the slider through every year.
+      </p>
+      <p>
+        To develop this interactive visualization, we split up the work across the different stages of
+        development, from the initial idea to the final project. That means that one team member was
+        primarily responsible for data wrangling and creating the visualizations for the proposals,
+        another was responsible for loading in the data and plotting it using D3, and the third was
+        responsible for adding the interactive elements and the CSS styling. Of course, all three of
+        us worked on every stage to help the person primarily responsible for that part of development,
+        such as by fixing bugs in their code. Our development consisted of first brainstorming ideas and
+        loading in the data to then make the static visualizations for our proposal. Then, we used our
+        best visualization as a reference for how our map should look like, and loaded in the data using
+        D3, first as a static map. We added a slider for the year and options to choose projections, and
+        then finally added interactivity to the map while styling the website. In total, we spent roughly
+        10-15 people-hours to develop this visualization. We feel like loading and correctly plotting the
+        data took the most time, since it was in a format not very familiar to us, and it was hard to
+        manage because of its large size. We also had to spend a decent amount of time fixing bugs
+        related to our interactive elements and making sure they interacted with each other correctly.
+      </p>
+    </section>
+
   </main>
 
   <!-- ── Loading / error overlay ──────────────────────────────── -->

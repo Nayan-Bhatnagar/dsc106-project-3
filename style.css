@@ -26,7 +26,7 @@ html, body {
   font-family: "Inter", "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
   color: var(--textPrim);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
 }
 
@@ -47,7 +47,7 @@ header h1 {
 }
 
 header h2 {
-  font-size: 1.4rem;
+  font-size: 1.65rem;
   font-weight: 600;
   letter-spacing: -0.025em;
   color: var(--textPrim);
@@ -57,7 +57,7 @@ header h2 {
 
 .subtitle {
   color: var(--textSec);
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   margin-top: 4px;
 }
 
@@ -69,9 +69,10 @@ main {
   grid-template-areas:
     "controls  controls"
     "map       info"
-    "ts        ts";
+    "ts        ts"
+    "writeup   writeup";
   gap: var(--gap-md);
-  padding: var(--gap-md) var(--gap-lg) max(180px, 25vh);
+  padding: var(--gap-md) var(--gap-lg) max(360px, 50vh);
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -448,6 +449,44 @@ button.playing:hover { background: #b91c1c; }
   stroke-dasharray: 4 3;
 }
 
+/* ── Write-up Section ─────────────────────────────────────── */
+#writeup-section {
+  grid-area: writeup;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap-lg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  line-height: 1.7;
+  color: var(--textPrim);
+  min-height: 100px;
+}
+
+#writeup-section h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--textPrim);
+  margin-bottom: var(--gap-md);
+}
+
+#writeup-section h3 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--textPrim);
+  margin-top: var(--gap-md);
+  margin-bottom: var(--gap-md);
+}
+
+#writeup-section p {
+  color: var(--textSec);
+  font-size: 1rem;
+  margin-bottom: var(--gap-md);
+}
+
+#writeup-section p:last-child {
+  margin-bottom: 0;
+}
+
 /* ── Overlay ──────────────────────────────────────────────── */
 #overlay {
   position: fixed;
@@ -531,7 +570,8 @@ button.playing:hover { background: #b91c1c; }
       "controls"
       "map"
       "info"
-      "ts";
+      "ts"
+      "writeup";
   }
 
   #info-panel {

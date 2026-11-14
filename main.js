@@ -117,9 +117,6 @@ async function init() {
   } catch (e) {
     showOverlay(
       "⚠️  Climate data not found or failed to load.\n\n" +
-      "Please run  export_data.py  in your Python environment first,\n" +
-      "then serve this folder with a local HTTP server:\n\n" +
-      "  python -m http.server 8080\n\n" +
       `Details: ${e.message}`,
       true
     );
