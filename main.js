@@ -512,6 +512,36 @@ function computeDiff(year) {
   }
 }
 
+// Largest |A − B| across ALL years for the current scenario pair.
+// Cached per scenario pair so the colour scale stays FIXED while scrubbing
+// the year — early years read pale, late years saturate, so the viewer can
+// see the divergence grow instead of every year being auto-rescaled.
+let scaleAbsMax = null;
+let scaleAbsMaxKey = null;
+
+function getFixedAbsMax() {
+  const key = `${scenarioA}|${scenarioB}`;
+  if (key === scaleAbsMaxKey && scaleAbsMax != null) return scaleAbsMax;
+
+  const { years } = appData.meta;
+  let maxAbs = 0.5;   // floor so a near-zero pair still has a usable scale
+  for (let y = 0; y < years.length; y++) {
+    const res = computeDiff(years[y]);
+    if (!res) continue;
+    const { diff } = res;
+    for (let r = 0; r < diff.length; r++) {
+      const row = diff[r];
+      for (let c = 0; c < row.length; c++) {
+        const a = Math.abs(row[c]);
+        if (a > maxAbs) maxAbs = a;
+      }
+    }
+  }
+  scaleAbsMaxKey = key;
+  scaleAbsMax = maxAbs;
+  return maxAbs;
+}
+
 function updateMap() {
   const result = computeDiff(currentYear);
   if (!result) return;
@@ -519,21 +549,10 @@ function updateMap() {
   currentDiff = result;   // keep for tooltip lookups
 
   const { diff, lats, lons } = result;
-  let minVal = Infinity;
-  let maxVal = -Infinity;
-  for (let r = 0; r < diff.length; r++) {
-    const row = diff[r];
-    for (let c = 0; c < row.length; c++) {
-      const v = row[c];
-      if (v < minVal) minVal = v;
-      if (v > maxVal) maxVal = v;
-    }
-  }
 
-  // Dynamic colormap:
-  // If difference is non-negative (e.g. SSP5-8.5 minus SSP1-2.6), use Reds like in the notebook
+  // Fixed diverging colormap (same scale across all years for this pair)
   let domain;
-  const absMax = Math.max(Math.abs(minVal), Math.abs(maxVal), 0.5);
+  const absMax = getFixedAbsMax();
   colorScale = d3.scaleDiverging(t => d3.interpolateRdBu(1 - t)).domain([-absMax, 0, absMax]);
   domain = [-absMax, absMax];
 
