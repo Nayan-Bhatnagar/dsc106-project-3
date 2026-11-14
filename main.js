@@ -183,7 +183,26 @@ function buildUI() {
   });
 
   // Play button
-  document.getElementById("btn-play").addEventListener("click", togglePlay);
+  const playBtn = document.getElementById("btn-play");
+  playBtn.addEventListener("click", togglePlay);
+
+  // Speed toggle (1× / 2×), created dynamically so only main.js changes
+  const speedBtn = document.createElement("button");
+  speedBtn.id = "btn-speed";
+  speedBtn.type = "button";
+  speedBtn.title = "Playback speed";
+  speedBtn.textContent = "1×";
+  speedBtn.style.marginLeft = "6px";
+  speedBtn.style.minWidth = "44px";
+  speedBtn.addEventListener("click", () => {
+    playSpeed = playSpeed === 1 ? 2 : 1;
+    speedBtn.textContent = playSpeed + "×";
+    // subtle highlight when boosted
+    speedBtn.style.background = playSpeed === 2 ? "#1d4ed8" : "";
+    // if currently playing, restart the timer so the new speed takes effect now
+    if (playTimer) { clearInterval(playTimer); startPlayTimer(); }
+  });
+  playBtn.parentElement.appendChild(speedBtn);
 }
 
 function updateTagLabels() {
@@ -906,36 +925,48 @@ function update() {
 }
 
 // ── Play animation ───────────────────────────────────────────────────────
-function togglePlay() {
-  const btn = document.getElementById("btn-play");
-  if (playTimer) {
-    clearInterval(playTimer);
-    playTimer = null;
-    btn.innerHTML = '<span class="btn-icon">▶</span> Play';
-    btn.classList.remove("playing");
-  } else {
-    btn.innerHTML = '<span class="btn-icon pause-icon">▐▐</span> Pause';
-    btn.classList.add("playing");
-    const { years } = appData.meta;
-    const slider = document.getElementById("year-slider");
+const BASE_INTERVAL = 300;   // ms per year at 1× speed
+let playSpeed = 1;           // 1 or 2 (×)
 
-    playTimer = setInterval(() => {
-      const nextYear = currentYear >= years[years.length - 1]
-        ? years[0]
-        : currentYear + 1;
-      if (nextYear == years[0]) {
-        clearInterval(playTimer);
-        playTimer = null;
-        btn.innerHTML = '<span class="btn-icon">▶</span> Play';
-        btn.classList.remove("playing");
-        return;
-      };
-      currentYear = nextYear;
-      slider.value = currentYear;
-      document.getElementById("year-display").textContent = currentYear;
-      update();
-    }, 300);
+function stopPlay() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  const btn = document.getElementById("btn-play");
+  btn.innerHTML = '<span class="btn-icon">▶</span> Play';
+  btn.classList.remove("playing");
+}
+
+function startPlayTimer() {
+  const { years } = appData.meta;
+  const lastYear = years[years.length - 1];
+  const slider = document.getElementById("year-slider");
+
+  playTimer = setInterval(() => {
+    if (currentYear >= lastYear) { stopPlay(); return; }  // play to the end, then stop
+    currentYear += 1;
+    slider.value = currentYear;
+    document.getElementById("year-display").textContent = currentYear;
+    update();
+  }, BASE_INTERVAL / playSpeed);
+}
+
+function togglePlay() {
+  if (playTimer) { stopPlay(); return; }
+
+  const { years } = appData.meta;
+  const lastYear = years[years.length - 1];
+
+  // If we're sitting at the end, pressing Play restarts from the first year
+  if (currentYear >= lastYear) {
+    currentYear = years[0];
+    document.getElementById("year-slider").value = currentYear;
+    document.getElementById("year-display").textContent = currentYear;
+    update();
   }
+
+  const btn = document.getElementById("btn-play");
+  btn.innerHTML = '<span class="btn-icon pause-icon">▐▐</span> Pause';
+  btn.classList.add("playing");
+  startPlayTimer();
 }
 
 // ── Overlay & Progress helpers ──────────────────────────────────────────
