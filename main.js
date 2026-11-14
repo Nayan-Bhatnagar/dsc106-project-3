@@ -39,6 +39,7 @@ let scenarioA = null;
 let scenarioB = null;
 let currentYear = 2015;
 let playTimer  = null;
+let currentDiff = null;   // latest {diff, lats, lons} for tooltip lookups
 
 // ── D3 selections / scales (created once, updated on change) ────────────
 let mapSvg, mapG, mapWidth, mapHeight;
@@ -378,6 +379,68 @@ function buildMap() {
 
   // Remove the default cursor style we set on the SVG itself
   mapSvg.style("cursor", null);
+
+  // ── Hover tooltip (details-on-demand) ─────────────────────────────────
+  // The map is a raster image, so there are no per-cell elements to hover.
+  // Instead we read the mouse position over the plot, undo the current zoom
+  // transform, convert plot pixels -> lon/lat, and look up the diff value.
+  const tooltip = d3.select("#tooltip");
+
+  zoomHitRect
+    .on("mousemove", (event) => {
+      if (!currentDiff) return;
+
+      // Mouse position in SVG coordinates
+      const [mx, my] = d3.pointer(event, mapSvg.node());
+
+      // Undo the zoom/pan transform so we get the position on the un-zoomed map
+      const t = d3.zoomTransform(zoomHitRect.node());
+      const px = (mx - t.x) / t.k;
+      const py = (my - t.y) / t.k;
+
+      // Fraction across the plot area (0..1)
+      const fx = (px - PLOT_MARGIN.left) / PLOT_W;
+      const fy = (py - PLOT_MARGIN.top)  / PLOT_H;
+      if (fx < 0 || fx > 1 || fy < 0 || fy > 1) { tooltip.classed("hidden", true); return; }
+
+      const { diff, lats, lons } = currentDiff;
+      const nLats = lats.length;
+      const nLons = lons.length;
+
+      // fy=0 is the top of the plot (North). Row 0 of diff is the southernmost
+      // lat, so flip: top of plot -> last row.
+      const rowFromTop = Math.min(nLats - 1, Math.floor(fy * nLats));
+      const r = (nLats - 1) - rowFromTop;
+
+      // The image is drawn with longitudes shifted by 180° (center = lon 0).
+      // Undo that shift to get the source column in the diff grid.
+      const halfCols = Math.floor(nLons / 2);
+      const xCol = Math.min(nLons - 1, Math.floor(fx * nLons));
+      const srcCol = (xCol + halfCols) % nLons;
+
+      const val = diff[r][srcCol];
+      const lat = lats[r];
+      let lon = lons[srcCol];
+      if (lon > 180) lon -= 360;   // show -180..180 instead of 0..360
+
+      // Position the tooltip using real pixel coords inside #map-container.
+      // (mx/my are viewBox units, which differ from on-screen pixels.)
+      const container = document.getElementById("map-container");
+      const rect = container.getBoundingClientRect();
+      const cx = event.clientX - rect.left;
+      const cy = event.clientY - rect.top;
+
+      tooltip
+        .classed("hidden", false)
+        .style("left", (cx + 14) + "px")
+        .style("top",  (cy + 14) + "px")
+        .html(
+          `<strong>${val >= 0 ? "+" : ""}${val.toFixed(2)} °C</strong>` +
+          `${Math.abs(lat).toFixed(0)}°${lat >= 0 ? "N" : "S"}, ` +
+          `${Math.abs(lon).toFixed(0)}°${lon >= 0 ? "E" : "W"}`
+        );
+    })
+    .on("mouseleave", () => tooltip.classed("hidden", true));
 }
 
 // ── Map update (raster heatmap similar to matplotlib .plot()) ──────────────────
@@ -452,6 +515,8 @@ function computeDiff(year) {
 function updateMap() {
   const result = computeDiff(currentYear);
   if (!result) return;
+
+  currentDiff = result;   // keep for tooltip lookups
 
   const { diff, lats, lons } = result;
   let minVal = Infinity;
